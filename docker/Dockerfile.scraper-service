@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY scraper-service/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy scraper-service/src to /app so module is scraper_service.src
+COPY scraper-service/src/ ./scraper_service/src/
+COPY scraper-service/src/__init__.py ./scraper_service/__init__.py
+
+WORKDIR /app
+
+CMD ["python", "-m", "scraper_service.src.scraper"]

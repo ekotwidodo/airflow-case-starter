@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY library-api/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy library-api to /app/library_api
+COPY library-api/ ./library_api/
+
+# Create symlink so 'app' module can be found
+RUN ln -s /app/library_api/app /app/app
+
+WORKDIR /app
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

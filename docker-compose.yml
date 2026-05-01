@@ -1,0 +1,174 @@
+services:
+  # Oracle Database for dev - simplified
+  oracle:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.oracle
+    environment:
+      ORACLE_PASSWORD: oracle123
+      ORACLE_DATABASE: BOOKSDB
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    restart: unless-stopped
+
+  # Library API
+  library-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.library-api
+    ports:
+      - "8000:8000"
+    environment:
+      DB_LIBRARY_HOST: oracle
+      DB_LIBRARY_PORT: 1521
+      DB_LIBRARY_SERVICE: BOOKSDB
+      DB_LIBRARY_USER: system
+      DB_LIBRARY_PASSWORD: oracle123
+      DB_INTEGRATOR_HOST: oracle
+      DB_INTEGRATOR_PORT: 1521
+      DB_INTEGRATOR_SERVICE: BOOKSDB
+      DB_INTEGRATOR_USER: system
+      DB_INTEGRATOR_PASSWORD: oracle123
+    depends_on:
+      - oracle
+    volumes:
+      - ./library-api:/app/library_api
+    restart: unless-stopped
+
+  # Scraper Service
+  scraper:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.scraper-service
+    environment:
+      SCRAPING_RAW_HOST: oracle
+      SCRAPING_RAW_PORT: 1521
+      SCRAPING_RAW_SERVICE: BOOKSDB
+      SCRAPING_RAW_USER: system
+      SCRAPING_RAW_PASSWORD: oracle123
+    depends_on:
+      - oracle
+    volumes:
+      - ./scraper-service/src:/app/scraper_service/src
+    restart: "no"
+
+  # Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - library-api
+    restart: unless-stopped
+
+  # Airflow PostgreSQL
+  airflow-postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  # Airflow Init
+  airflow-init:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.airflow
+    command: airflow db init
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    depends_on:
+      - airflow-postgres
+
+  # Airflow Webserver
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.airflow
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__WEBSERVER__SECRET_KEY: airflow-secret-key-2026
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      SCRAPING_RAW_HOST: oracle
+      SCRAPING_RAW_PORT: 1521
+      SCRAPING_RAW_SERVICE: BOOKSDB
+      SCRAPING_RAW_USER: system
+      SCRAPING_RAW_PASSWORD: oracle123
+      STAGING_HOST: oracle
+      STAGING_PORT: 1521
+      STAGING_SERVICE: BOOKSDB
+      STAGING_USER: system
+      STAGING_PASSWORD: oracle123
+      INTEGRATOR_HOST: oracle
+      INTEGRATOR_PORT: 1521
+      INTEGRATOR_SERVICE: BOOKSDB
+      INTEGRATOR_USER: system
+      INTEGRATOR_PASSWORD: oracle123
+      DB_LIBRARY_HOST: oracle
+      DB_LIBRARY_PORT: 1521
+      DB_LIBRARY_SERVICE: BOOKSDB
+      DB_LIBRARY_USER: system
+      DB_LIBRARY_PASSWORD: oracle123
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - airflow-logs:/opt/airflow/logs
+    depends_on:
+      - airflow-postgres
+      - airflow-init
+    restart: unless-stopped
+
+  # Airflow Scheduler
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.airflow
+    command: airflow scheduler
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__WEBSERVER__SECRET_KEY: airflow-secret-key-2026
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      SCRAPING_RAW_HOST: oracle
+      SCRAPING_RAW_PORT: 1521
+      SCRAPING_RAW_SERVICE: BOOKSDB
+      SCRAPING_RAW_USER: system
+      SCRAPING_RAW_PASSWORD: oracle123
+      STAGING_HOST: oracle
+      STAGING_PORT: 1521
+      STAGING_SERVICE: BOOKSDB
+      STAGING_USER: system
+      STAGING_PASSWORD: oracle123
+      INTEGRATOR_HOST: oracle
+      INTEGRATOR_PORT: 1521
+      INTEGRATOR_SERVICE: BOOKSDB
+      INTEGRATOR_USER: system
+      INTEGRATOR_PASSWORD: oracle123
+      DB_LIBRARY_HOST: oracle
+      DB_LIBRARY_PORT: 1521
+      DB_LIBRARY_SERVICE: BOOKSDB
+      DB_LIBRARY_USER: system
+      DB_LIBRARY_PASSWORD: oracle123
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - airflow-logs:/opt/airflow/logs
+    depends_on:
+      - airflow-postgres
+      - airflow-webserver
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  oracle-data:
+  airflow-logs:
