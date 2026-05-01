@@ -43,10 +43,10 @@ flowchart LR
 ```
 
 ### Flow Description
-1. **Scraping DAG** (every 30 min): Fetches data from books.toscrape.com, validates, deduplicates, and loads to `db_scraping_raw`
+1. **Scraping DAG** (every 20 min): Picks a **random page (1-50)** from books.toscrape.com, scrapes all 20 books, **randomly selects 8 books**, validates, deduplicates, and loads to `db_scraping_raw`
 2. **Frontend + Library API**: Users manually add books via UI → stored in `db_library`
-3. **Staging DAG** (every 1 hour): Extracts from BOTH `db_scraping_raw` AND `db_library`, merges, validates, deduplicates by hash(title+price), loads to `db_staging` → `db_integrator`
-4. **Mart DAG** (daily): Extracts from `db_staging`, upserts `dim_book` and inserts `fact_books` in `db_integrator`
+3. **Staging DAG** (every 40 min): Extracts from BOTH `db_scraping_raw` AND `db_library`, merges, validates, deduplicates by hash(title+price), loads to `db_staging` → `db_integrator`
+4. **Mart DAG** (every 1 hour): Extracts from `db_staging`, upserts `dim_book` and inserts `fact_books` in `db_integrator`
 5. **Library API**: Dual connection — CRUD operations on `db_library`, Dashboard queries from `db_integrator`
 
 ---
@@ -78,17 +78,19 @@ flowchart LR
 - Library: requests, BeautifulSoup
 
 #### Logic
-- Fetch halaman listing (books.toscrape.com/catalogue/page-1.html)
-- Parse `.product_pod` untuk title, price, rating, availability
-- Fetch halaman detail untuk setiap buku
+- **Random Page Selection**: Pilih halaman acak dari 1-50
+  - Page 1: `https://books.toscrape.com/index.html`
+  - Page 2-50: `https://books.toscrape.com/catalogue/page-N.html`
+- Parse `.product_pod` untuk title, price, rating, availability (20 books per page)
+- **Random Sampling**: Secara acak pilih 8 buku dari 20 buku yang tersedia
+- Fetch halaman detail untuk setiap buku terpilih
 - Extract category dari breadcrumb (`ul.breadcrumb > a:last-child`)
-- Limit 10 item per run
 
 #### Idempotency
 - hash(title + price)
 
 #### Category Extraction
-- URL detail: `http://books.toscrape.com/catalogue/{href}`
+- URL detail: `https://books.toscrape.com/catalogue/{href}` atau `https://books.toscrape.com/{href}` (untuk relative path)
 - Breadcrumb pattern: `Home / Books / {Category} / {Title}`
 - Category = last `<a>` tag in `ul.breadcrumb`
 
@@ -154,13 +156,13 @@ CREATE TABLE fact_books (
 ### 5.1 Job Breakdown
 
 #### DAG: scraping_dag
-- task_fetch
-- task_parse
+- task_fetch (random page 1-50)
+- task_parse (parse 20 books, randomly select 8)
 - task_validate_schema
 - task_load_raw
 
 #### Schedule
-- Every 30 minutes
+- Every 20 minutes
 
 #### DAG: staging_dag
 - task_extract_raw (from db_scraping_raw + db_library)
@@ -171,7 +173,7 @@ CREATE TABLE fact_books (
 - task_load_integrator
 
 #### Schedule
-- Every 1 hour
+- Every 40 minutes
 
 #### DAG: mart_dag
 - task_extract_stg
@@ -425,12 +427,12 @@ Response (200):
 ## 16. Airflow DAG Blueprint (Task-Level)
 
 ### scraping_dag
-- fetch_html
-- parse_books
+- fetch_html (picks random page 1-50, fetches HTML)
+- parse_books (parses 20 books, randomly selects 8, extracts categories)
 - validate_schema
 - load_raw
 
-Schedule: `*/30 * * * *` (every 30 minutes)
+Schedule: `*/20 * * * *` (every 20 minutes)
 
 Dependencies:
 ```
@@ -450,7 +452,7 @@ Retry Policy:
 - deduplicate
 - load_staging
 
-Schedule: `0 * * * *` (every 1 hour)
+Schedule: `*/40 * * * *` (every 40 minutes)
 
 ---
 
@@ -459,6 +461,8 @@ Schedule: `0 * * * *` (every 1 hour)
 - upsert_dim_book
 - upsert_dim_category
 - insert_fact
+
+Schedule: `0 * * * *` (every 1 hour)
 
 ---
 
@@ -532,9 +536,9 @@ Future Integration:
 
 | DAG | Schedule | SLA |
 |-----|----------|-----|
-| scraping | Every 30 min | 30 min |
-| staging | Every 1 hour | 45 min |
-| mart | Daily | 60 min |
+| scraping | Every 20 min (random page 1-50, 8 books) | 30 min |
+| staging | Every 40 min | 45 min |
+| mart | Every 1 hour | 60 min |
 
 ---
 
@@ -551,16 +555,27 @@ UI untuk mengelola buku dan menampilkan data dari seluruh ekosistem (library, sc
 ### Navigation Menu
 | Menu | Description | API Endpoint |
 |------|-------------|--------------|
-| Book List | CRUD books with edit/delete actions | GET/POST/PUT/DELETE /api/v1/books |
-| Book Scrap | Shows scraped books with categories | GET /api/v1/books/scraped |
-| Book All | Shows merged books from integrator | GET /api/v1/books/integrator |
+| Book List | CRUD books with search, filter, pagination | GET/POST/PUT/DELETE /api/v1/books |
+| Book Scrap | Scraped books with search, filter, pagination | GET /api/v1/books/scraped |
+| Book All | Integrator books with search, filter, pagination | GET /api/v1/books/integrator |
 | Dashboard | KPIs, rating distribution, category stats | GET /api/v1/dashboard |
 
 ### Features
-- **Book List**: Table with filter by category/rating, pagination, edit modal, delete confirmation
-- **Book Scrap**: Read-only table showing scraped books with category, price, rating, availability
-- **Book All**: Read-only table showing integrator books with source (scraper/library)
+- **Book List**: Table with search by title, filter by category/rating, pagination (10/page), edit modal, delete confirmation, add book modal, reset button, "Showing X of Y" counter
+- **Book Scrap**: Read-only table with search by title, filter by category/rating, pagination (10/page), reset button, "Showing X of Y" counter
+- **Book All**: Read-only table with search by title, filter by category/source/rating, pagination (10/page), reset button, "Showing X of Y" counter
 - **Dashboard**: KPI cards, horizontal bar charts for rating and categories, recent books table
+
+### Pagination & Filter Design
+Semua view list memiliki fitur yang konsisten:
+- **Search by Title**: Input text untuk pencarian judul (case-insensitive substring match)
+- **Filter by Category**: Input text untuk filter kategori (case-insensitive substring match)
+- **Filter by Rating**: Dropdown untuk minimum rating (1+ Star sampai 5+ Star)
+- **Filter by Source**: Dropdown untuk sumber data (khusus Book All: Library/Scraper)
+- **Pagination**: 10 items per halaman, Previous/Next button, "Page X of Y"
+- **Reset Button**: Menghapus semua filter dan kembali ke halaman 1
+- **Counter**: Menampilkan "Showing X of Y books"
+- **Auto-reset Page**: Halaman otomatis kembali ke 1 saat filter berubah (useEffect)
 
 ### API Integration
 - POST /api/v1/books
@@ -710,9 +725,17 @@ Website berubah
 
 ### 26.2 Frontend Production UX Enhancements
 
-#### Improvements
-- Pagination untuk list buku
-- Search & filter (by category, rating)
+#### Completed
+- [x] Pagination untuk semua list (Book List, Book Scrap, Book All) — 10 items per halaman
+- [x] Search by title (case-insensitive substring match)
+- [x] Filter by category (case-insensitive substring match)
+- [x] Filter by rating (dropdown 1+ to 5+)
+- [x] Filter by source (Book All only: Library/Scraper)
+- [x] Reset button untuk menghapus semua filter
+- [x] Counter "Showing X of Y books"
+- [x] Auto-reset page ke 1 saat filter berubah
+
+#### Remaining Improvements
 - Loading state (spinner/skeleton)
 - Error state (user-friendly message)
 

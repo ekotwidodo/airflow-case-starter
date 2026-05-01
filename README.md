@@ -22,7 +22,7 @@ db_library (OLTP) ──┐
 db_scraping_raw ────┘
 ```
 
-1. **Scraping DAG** (every 20 min): Fetches books from books.toscrape.com, extracts categories from detail pages, validates, deduplicates by hash(title+price), **appends** to `db_scraping_raw` (append-only, scraper is the source of truth)
+1. **Scraping DAG** (every 20 min): Picks a **random page (1-50)** from books.toscrape.com, scrapes all 20 books, **randomly selects 8 books**, extracts categories from detail pages, validates, deduplicates by hash(title+price), **appends** to `db_scraping_raw` (append-only, scraper is the source of truth)
 2. **Frontend + Library API**: Users manually add/edit/delete books via UI → stored in `db_library` (OLTP, full CRUD)
 3. **Staging DAG** (every 40 min): Extracts from BOTH `db_scraping_raw` AND `db_library`, merges, validates, deduplicates by SK, **TRUNCATE + RELOAD** `db_staging` (full sync — deletes in source DBs propagate here)
 4. **Mart DAG** (every 1 hour): Extracts from `db_staging`, **syncs `dim_book`** (adds new, removes orphans), **TRUNCATE + RELOAD `fact_books`** (full sync — dashboard always reflects staging state)
@@ -48,7 +48,7 @@ Books from both sources are deduplicated by `SK = SHA-256(title + price)`. If th
 | Service | Description | Tech Stack |
 |---------|-------------|------------|
 | Library API | CRUD + Dashboard API with dual DB connections | FastAPI, Oracle DB |
-| Scraper Service | Web scraping with category extraction from detail pages | Python, BeautifulSoup, Requests |
+| Scraper Service | Random page (1-50) → scrape 20 books → randomly select 8 → load to RAW | Python, BeautifulSoup, Requests |
 | Airflow | Orchestrates ETL pipelines (scraping → staging → mart) | Apache Airflow 2.7 |
 | Frontend | Books management UI with 4 views | React, Axios |
 | Oracle DB | Single Oracle XE instance hosting all 4 databases | Oracle 21c XE |
@@ -57,9 +57,9 @@ Books from both sources are deduplicated by `SK = SHA-256(title + price)`. If th
 
 | View | Description | Data Source |
 |------|-------------|-------------|
-| Book List | CRUD books with add/edit/delete modals, `#` column (order number), filter, pagination | db_library |
-| Book Scrap | Shows scraped books with categories | db_scraping_raw |
-| Book All | Shows merged books from integrator | db_integrator (fact_books + dim_book) |
+| Book List | CRUD books with add/edit/delete modals, `#` column, search by title, filter by category/rating, pagination | db_library |
+| Book Scrap | Scraped books with search by title, filter by category/rating, pagination | db_scraping_raw |
+| Book All | Integrator books with search by title, filter by category/source/rating, pagination | db_integrator (fact_books + dim_book) |
 | Dashboard | KPIs, rating distribution, source distribution, category stats (count only), recent books | db_integrator |
 
 ## Databases
@@ -230,7 +230,7 @@ docker exec de-airflow-oracles-airflow-webserver-1 airflow dags trigger mart_dag
 
 | DAG | Description | Schedule | Cron | SLA |
 |-----|-------------|----------|------|-----|
-| scraping_dag | Scrape books + categories → append to RAW | Every 20 min | `*/20 * * * *` | 30 min |
+| scraping_dag | Random page (1-50) → 20 books → random 8 → append to RAW | Every 20 min | `*/20 * * * *` | 30 min |
 | staging_dag | Merge scraping + library → clean → TRUNCATE+RELOAD STG | Every 40 min | `*/40 * * * *` | 45 min |
 | mart_dag | Sync dim_book + TRUNCATE+RELOAD fact_books | Every 1 hour | `0 * * * *` | 60 min |
 

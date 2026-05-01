@@ -3,6 +3,12 @@ scraping_dag.py - Airflow DAG: Scraping Pipeline (RAW Layer)
 Schedule: Every 20 minutes (*/20 * * * *)
 SLA: 30 minutes
 
+Random scraping strategy:
+  1. Pick a random page from 1-50 on books.toscrape.com
+  2. Scrape all 20 books from that page
+  3. Randomly select 8 books from the 20
+  4. Load selected books into db_scraping_raw
+
 Tasks:
   fetch_html -> parse_books -> validate_schema -> load_raw
 

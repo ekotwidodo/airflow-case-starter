@@ -1,15 +1,19 @@
 """
 scraper.py - Web scraper for books.toscrape.com
-Fetches book listings, navigates to detail pages to extract categories from breadcrumbs,
-and loads data into db_scraping_raw with deduplication by SHA-256 hash(title+price).
+Random scraping strategy:
+  1. Pick a random page from 1-50
+  2. Scrape all 20 books from that page
+  3. Randomly select 8 books
+  4. Load selected books into db_scraping_raw with deduplication
 """
 import requests
 import hashlib
 import time
+import random
 from bs4 import BeautifulSoup
 from typing import Optional
 
-from scraper_service.src.config import BASE_URL, MAX_ITEMS
+from scraper_service.src.config import BASE_URL, TOTAL_PAGES, SAMPLE_SIZE
 from scraper_service.src.loader import get_db_connection, load_raw, load_dlq
 from scraper_service.src.logging_config import log
 
@@ -36,27 +40,42 @@ def wait_for_db(max_retries=60, delay=5):
     return False
 
 
-def fetch_page(page: int = 1) -> Optional[str]:
+def fetch_page(page: int) -> Optional[str]:
     """Fetch a catalog page from books.toscrape.com.
-    Returns HTML string or None on failure (logs to DLQ).
+    Page 1 uses index.html, pages 2-50 use catalogue/page-N.html.
+
+    Args:
+        page: Page number (1-50)
+
+    Returns:
+        HTML string or None on failure (logs to DLQ)
     """
     try:
-        resp = requests.get(BASE_URL.format(page), timeout=10)
+        if page == 1:
+            url = "https://books.toscrape.com/index.html"
+        else:
+            url = f"https://books.toscrape.com/catalogue/page-{page}.html"
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         return resp.text
     except Exception as e:
-        log.error("fetch_page_failed", error=str(e))
+        log.error("fetch_page_failed", page=page, error=str(e))
         load_dlq(None, str(e))
         return None
 
 
 def parse_books(html: str) -> list:
-    """Parse book data from catalog HTML.
+    """Parse all book data from catalog HTML.
     For each book, navigates to its detail page to extract category from breadcrumb.
-    Returns list of dicts with: title, price, rating, availability, category, sk.
+
+    Args:
+        html: Raw HTML from catalog page
+
+    Returns:
+        List of dicts with: title, price, rating, availability, category, sk
     """
     soup = BeautifulSoup(html, "html.parser")
-    products = soup.select(".product_pod")[:MAX_ITEMS]
+    products = soup.select(".product_pod")
     books = []
     for p in products:
         title = p.h3.a["title"]
@@ -71,9 +90,9 @@ def parse_books(html: str) -> list:
         category = None
         try:
             if href.startswith("../"):
-                detail_url = "http://books.toscrape.com/" + href.replace("../", "")
+                detail_url = "https://books.toscrape.com/" + href.replace("../", "")
             else:
-                detail_url = "http://books.toscrape.com/catalogue/" + href
+                detail_url = "https://books.toscrape.com/catalogue/" + href
             resp = requests.get(detail_url, timeout=10)
             if resp.status_code == 200:
                 detail_soup = BeautifulSoup(resp.text, "html.parser")
@@ -97,21 +116,44 @@ def parse_books(html: str) -> list:
 
 
 def run():
-    """Main scraper entry point. Waits for DB, fetches page 1, parses books, loads to RAW."""
+    """Main scraper entry point.
+    Strategy:
+      1. Wait for database
+      2. Pick random page (1-50)
+      3. Fetch and parse all books from that page
+      4. Randomly select SAMPLE_SIZE books (default: 8)
+      5. Load selected books to RAW with deduplication
+    """
     log.info("scraper_started")
     if not wait_for_db():
         return
-    html = fetch_page(1)
+
+    # Step 1: Pick random page from 1 to TOTAL_PAGES
+    page = random.randint(1, TOTAL_PAGES)
+    log.info("random_page_selected", page=page)
+
+    # Step 2: Fetch the page
+    html = fetch_page(page)
     if not html:
         log.error("scraper_fetch_failed")
         return
-    books = parse_books(html)
-    log.info("books_parsed", count=len(books))
+
+    # Step 3: Parse all books (up to 20 per page)
+    all_books = parse_books(html)
+    log.info("books_parsed", total=len(all_books))
+
+    # Step 4: Randomly select SAMPLE_SIZE books
+    selected = random.sample(all_books, min(SAMPLE_SIZE, len(all_books)))
+    log.info("books_randomly_selected", count=len(selected))
+
+    # Step 5: Load to database
     conn = get_db_connection()
     try:
-        for book in books:
-            load_raw(book, conn)
-        log.info("scraper_completed", loaded=len(books))
+        loaded = 0
+        for book in selected:
+            if load_raw(book, conn):
+                loaded += 1
+        log.info("scraper_completed", page=page, selected=len(selected), loaded=loaded)
     finally:
         conn.close()
 

@@ -35,13 +35,17 @@ Platform data engineering end-to-end untuk ekosistem data buku yang mencakup:
 
 ### 4.1 Library Management (OLTP)
 - **Create Book**: User input buku baru melalui modal form (symmetrical dengan edit form)
-- **List Books**: Tampilkan daftar buku dengan filter, kolom `#` (nomor urut, bukan ID database)
+- **List Books**: Tampilkan daftar buku dengan search by title, filter by category/rating, pagination (10 per halaman), kolom `#` (nomor urut)
 - **Edit Book**: Update data buku melalui modal form
 - **Delete Book**: Hapus buku dari database (dengan konfirmasi)
 - **Validation**: Client-side dan server-side (title required, price > 0, rating 1-5)
+- **Filter Controls**: Search bar (title), category input, rating dropdown, reset button, show count "Showing X of Y books"
 
 ### 4.2 Web Scraping (Ingestion)
-- **Auto-scrape**: Fetch data buku dari books.toscrape.com
+- **Random Page Selection**: Setiap run memilih halaman secara acak dari 1-50 pada books.toscrape.com
+  - Page 1: `https://books.toscrape.com/index.html`
+  - Page 2-50: `https://books.toscrape.com/catalogue/page-N.html`
+- **Random Book Sampling**: Dari 20 buku di halaman yang terpilih, secara acak memilih 8 buku untuk dimasukkan ke database
 - **Category Extraction**: Extract kategori dari breadcrumb halaman detail buku
 - **Deduplication**: Hash(title + price) untuk menghindari duplikasi
 - **Error Handling**: Retry 3x, DLQ untuk data yang gagal
@@ -50,7 +54,7 @@ Platform data engineering end-to-end untuk ekosistem data buku yang mencakup:
 Platform menggunakan model **full synchronization** — semua database downstream di-refresh dari sumber upstream pada setiap DAG run, sehingga delete dan edit di sumber ter-propagasi ke dashboard.
 
 - **Scraping DAG** (setiap 20 menit):
-  - Fetch HTML → Parse books → Validate schema → Append ke RAW (append-only, scraper sebagai source of truth)
+  - Pilih halaman acak (1-50) → Fetch HTML → Parse 20 buku → Random pilih 8 buku → Validate schema → Append ke RAW (append-only, scraper sebagai source of truth)
 - **Staging DAG** (setiap 40 menit):
   - Extract dari scraping DB + library DB → Merge → Validate → Deduplicate → **TRUNCATE + RELOAD** ke STG (full sync — delete di sumber ter-propagasi)
 - **Mart DAG** (setiap 1 jam):
@@ -77,6 +81,17 @@ Buku dari kedua sumber dideduplikasi berdasarkan `SK = SHA-256(title + price)`. 
 - **Source Distribution**: Bar chart distribusi sumber data (Library vs Scraping)
 - **Category Stats**: Top categories dengan bar chart dan count (tanpa harga)
 - **Recent Books**: 10 buku terbaru yang masuk ke data mart (title, price, rating, source)
+
+### 4.7 Frontend Pagination & Filter
+Semua view list (Book List, Book Scrap, Book All) memiliki fitur yang konsisten:
+- **Search by Title**: Input text untuk pencarian judul (case-insensitive)
+- **Filter by Category**: Input text untuk filter kategori (case-insensitive)
+- **Filter by Rating**: Dropdown untuk minimum rating (1+ sampai 5+)
+- **Filter by Source**: Dropdown untuk sumber data (khusus Book All: Library/Scraper)
+- **Pagination**: 10 items per halaman, dengan Previous/Next button dan "Page X of Y"
+- **Reset Button**: Menghapus semua filter dan kembali ke halaman 1
+- **Counter**: Menampilkan "Showing X of Y books"
+- **Auto-reset Page**: Halaman otomatis kembali ke 1 saat filter berubah
 
 ## 5. Data Model
 
@@ -153,7 +168,6 @@ Buku dari kedua sumber dideduplikasi berdasarkan `SK = SHA-256(title + price)`. 
 
 ## 10. Future Enhancements
 
-- Pagination dan search/filter pada Book Scrap dan Book All
 - Export data ke CSV/Excel
 - Alerting otomatis ke Slack/Email saat DAG gagal
 - Data lineage tracking dengan OpenMetadata / Amundsen

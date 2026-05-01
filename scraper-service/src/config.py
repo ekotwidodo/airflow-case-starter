@@ -1,8 +1,10 @@
 """
 config.py - Scraper service configuration
 Defines constants and DB config for the scraper service.
-BASE_URL: books.toscrape.com catalog page template
-MAX_ITEMS: Number of books to scrape per run (10 for demo)
+
+BASE_URL: books.toscrape.com catalog page template (page 1 uses index.html)
+TOTAL_PAGES: Total number of catalog pages available (50)
+SAMPLE_SIZE: Number of books to randomly select per run (8 out of 20)
 """
 import os
 from dotenv import load_dotenv
@@ -24,8 +26,8 @@ def get_db_config():
     }
 
 
-# Catalog page URL template (page number inserted via .format())
-BASE_URL = "http://books.toscrape.com/catalogue/page-{}.html"
+# Total catalog pages on books.toscrape.com
+TOTAL_PAGES = 50
 
-# Maximum number of books to scrape per run
-MAX_ITEMS = 10
+# Number of books to randomly select per scraping run
+SAMPLE_SIZE = 8

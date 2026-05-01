@@ -11,6 +11,7 @@ const BookList: React.FC = () => {
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [titleSearch, setTitleSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [ratingFilter, setRatingFilter] = useState<number | "">("");
   const [page, setPage] = useState(1);
@@ -23,6 +24,9 @@ const BookList: React.FC = () => {
   /** State: create modal */
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState<BookCreate>({ title: "", category: "", price: 0, rating: 1 });
+
+  /** Reset to page 1 when filters change */
+  useEffect(() => { setPage(1); }, [titleSearch, categoryFilter, ratingFilter]);
 
   /** Fetch all books from library API */
   const fetchBooks = async () => {
@@ -40,8 +44,9 @@ const BookList: React.FC = () => {
 
   useEffect(() => { fetchBooks(); }, []);
 
-  /** Filter books by category (case-insensitive) and minimum rating */
+  /** Filter books by title (case-insensitive), category, and minimum rating */
   const filtered = books.filter(b => {
+    if (titleSearch && !b.title.toLowerCase().includes(titleSearch.toLowerCase())) return false;
     if (categoryFilter && (!b.category || !b.category.toLowerCase().includes(categoryFilter.toLowerCase()))) return false;
     if (ratingFilter && b.rating < ratingFilter) return false;
     return true;
@@ -95,18 +100,19 @@ const BookList: React.FC = () => {
 
   return (
     <div>
-      {/* Filter bar and Add Book button */}
-      <div style={{ marginBottom: 20, display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1 }}>
-          <input type="text" placeholder="Filter by category..." value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={{ padding: 8, flex: 1 }} />
-          <select value={ratingFilter} onChange={e => setRatingFilter(e.target.value ? parseInt(e.target.value) : "")} style={{ padding: 8 }}>
-            <option value="">All Ratings</option>
-            {[1,2,3,4,5].map(r => <option key={r} value={r}>{r}+</option>)}
-          </select>
-          <button onClick={fetchBooks} style={{ padding: "8px 16px" }}>Refresh</button>
-        </div>
+      {/* Filter bar: title search, category filter, rating filter, refresh, add book */}
+      <div style={{ marginBottom: 20, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="text" placeholder="Search by title..." value={titleSearch} onChange={e => setTitleSearch(e.target.value)} style={{ padding: 8, flex: 1, minWidth: 150 }} />
+        <input type="text" placeholder="Filter by category..." value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={{ padding: 8, width: 160 }} />
+        <select value={ratingFilter} onChange={e => setRatingFilter(e.target.value ? parseInt(e.target.value) : "")} style={{ padding: 8 }}>
+          <option value="">All Ratings</option>
+          {[1,2,3,4,5].map(r => <option key={r} value={r}>{r}+ Star</option>)}
+        </select>
+        <button onClick={fetchBooks} style={{ padding: "8px 16px" }}>Refresh</button>
+        <button onClick={() => { setTitleSearch(""); setCategoryFilter(""); setRatingFilter(""); }} style={{ padding: "8px 16px" }}>Reset</button>
         <button onClick={() => setShowCreate(true)} style={{ padding: "8px 16px", background: "#4a90d9", color: "#fff", border: "none", cursor: "pointer" }}>+ Add Book</button>
       </div>
+      <div style={{ marginBottom: 10, color: "#666", fontSize: 13 }}>Showing {paginated.length} of {filtered.length} books</div>
 
       {/* Books table with row numbers, edit/delete actions */}
       {paginated.length === 0 ? (

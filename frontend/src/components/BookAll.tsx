@@ -2,14 +2,24 @@
  * BookAll - Displays merged books from db_integrator (MART layer)
  * Shows the final deduplicated data after staging + mart DAGs run
  * Includes source column (library vs scraper) to track data origin
+ * Features: search by title, filter by category/source/rating, pagination
  */
 import React, { useEffect, useState } from "react";
 import { listIntegratorBooks, IntegratorBook } from "../api/books";
 
 const BookAll: React.FC = () => {
+  /** State: books list, loading, error */
   const [books, setBooks] = useState<IntegratorBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  /** State: search and filter */
+  const [titleSearch, setTitleSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [ratingFilter, setRatingFilter] = useState<number | "">("");
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   /** Fetch integrator books on mount */
   useEffect(() => {
@@ -19,13 +29,47 @@ const BookAll: React.FC = () => {
       .finally(() => setLoading(false));
   }, []);
 
+  /** Reset to page 1 when filters change */
+  useEffect(() => { setPage(1); }, [titleSearch, categoryFilter, sourceFilter, ratingFilter]);
+
+  /** Filter books by title, category, source, and minimum rating */
+  const filtered = books.filter(b => {
+    if (titleSearch && !b.title.toLowerCase().includes(titleSearch.toLowerCase())) return false;
+    if (categoryFilter && (!b.category || !b.category.toLowerCase().includes(categoryFilter.toLowerCase()))) return false;
+    if (sourceFilter && b.source !== sourceFilter) return false;
+    if (ratingFilter && b.rating < ratingFilter) return false;
+    return true;
+  });
+  const totalPages = Math.ceil(filtered.length / pageSize);
+  const paginated = filtered.slice((page - 1) * pageSize, page * pageSize);
+
   if (loading) return <div style={{ textAlign: "center", padding: 40 }}>Loading integrator books...</div>;
   if (error) return <div style={{ color: "red", textAlign: "center" }}>Error: {error}</div>;
 
   return (
     <div>
-      <h2 style={{ marginBottom: 20 }}>All Books - Integrator ({books.length})</h2>
-      {books.length === 0 ? (
+      <h2 style={{ marginBottom: 20 }}>All Books - Integrator</h2>
+
+      {/* Filter bar: title search, category, source, rating, refresh, reset */}
+      <div style={{ marginBottom: 20, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="text" placeholder="Search by title..." value={titleSearch} onChange={e => setTitleSearch(e.target.value)} style={{ padding: 8, flex: 1, minWidth: 150 }} />
+        <input type="text" placeholder="Filter by category..." value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} style={{ padding: 8, width: 140 }} />
+        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={{ padding: 8 }}>
+          <option value="">All Sources</option>
+          <option value="library">Library</option>
+          <option value="scraper">Scraper</option>
+        </select>
+        <select value={ratingFilter} onChange={e => setRatingFilter(e.target.value ? parseInt(e.target.value) : "")} style={{ padding: 8 }}>
+          <option value="">All Ratings</option>
+          {[1,2,3,4,5].map(r => <option key={r} value={r}>{r}+ Star</option>)}
+        </select>
+        <button onClick={() => listIntegratorBooks().then(setBooks)} style={{ padding: "8px 16px" }}>Refresh</button>
+        <button onClick={() => { setTitleSearch(""); setCategoryFilter(""); setSourceFilter(""); setRatingFilter(""); }} style={{ padding: "8px 16px" }}>Reset</button>
+      </div>
+      <div style={{ marginBottom: 10, color: "#666", fontSize: 13 }}>Showing {paginated.length} of {filtered.length} books</div>
+
+      {/* Books table */}
+      {paginated.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>No books in integrator. Run staging and mart DAGs.</div>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -41,9 +85,9 @@ const BookAll: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {books.map((book, i) => (
+            {paginated.map((book, idx) => (
               <tr key={book.sk} style={{ borderBottom: "1px solid #eee" }}>
-                <td style={{ padding: 10 }}>{i + 1}</td>
+                <td style={{ padding: 10 }}>{(page - 1) * pageSize + idx + 1}</td>
                 <td style={{ padding: 10 }}>{book.title}</td>
                 <td style={{ padding: 10 }}>{book.category || "-"}</td>
                 <td style={{ padding: 10, textAlign: "right" }}>${book.price.toFixed(2)}</td>
@@ -54,6 +98,15 @@ const BookAll: React.FC = () => {
             ))}
           </tbody>
         </table>
+      )}
+
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div style={{ marginTop: 20, display: "flex", justifyContent: "center", gap: 10 }}>
+          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} style={{ padding: "5px 15px" }}>Previous</button>
+          <span style={{ padding: "5px 10px" }}>Page {page} of {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} style={{ padding: "5px 15px" }}>Next</button>
+        </div>
       )}
     </div>
   );

@@ -14,7 +14,12 @@ to ensure deletes/edits in source databases propagate downstream.
 import oracledb
 import json
 import hashlib
+import random
 from datetime import datetime
+
+# Scraping configuration: random page from 1-50, select 8 books per run
+TOTAL_PAGES = 50
+SAMPLE_SIZE = 8
 
 
 def get_connection(dsn: str, user: str, password: str) -> oracledb.Connection:
@@ -34,27 +39,36 @@ def get_connection(dsn: str, user: str, password: str) -> oracledb.Connection:
 # ==================== SCRAPING DAG TASKS ====================
 
 def fetch_html_fn(**context):
-    """Task: Fetch HTML from books.toscrape.com catalog page 1.
-    Pushes HTML content to XCom for the next task.
+    """Task: Pick random page (1-50) from books.toscrape.com and fetch HTML.
+    Page 1 uses index.html, pages 2-50 use catalogue/page-N.html.
+    Pushes HTML content and selected page number to XCom.
     """
     import requests
-    resp = requests.get("http://books.toscrape.com/catalogue/page-1.html", timeout=10)
+    page = random.randint(1, TOTAL_PAGES)
+    if page == 1:
+        url = "https://books.toscrape.com/index.html"
+    else:
+        url = f"https://books.toscrape.com/catalogue/page-{page}.html"
+    resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     context['ti'].xcom_push(key='html', value=resp.text)
-    return "fetched"
+    context['ti'].xcom_push(key='page', value=page)
+    return f"fetched page {page}"
 
 
 def parse_books_fn(**context):
-    """Task: Parse book data from HTML, extract categories from detail pages.
+    """Task: Parse all books from HTML, extract categories from detail pages.
     For each book, navigates to its detail page to get category from breadcrumb.
-    Pushes parsed books (list of dicts) to XCom.
+    Then randomly selects SAMPLE_SIZE (8) books from the full list.
+    Pushes selected books to XCom.
     """
     import requests
     from bs4 import BeautifulSoup
     html = context['ti'].xcom_pull(key='html', task_ids='fetch_html')
+    page = context['ti'].xcom_pull(key='page', task_ids='fetch_html')
     soup = BeautifulSoup(html, "html.parser")
-    products = soup.select(".product_pod")[:10]
-    books = []
+    products = soup.select(".product_pod")
+    all_books = []
     for p in products:
         title = p.h3.a["title"]
         href = p.h3.a["href"]
@@ -67,9 +81,9 @@ def parse_books_fn(**context):
         category = None
         try:
             if href.startswith("../"):
-                detail_url = "http://books.toscrape.com/" + href.replace("../", "")
+                detail_url = "https://books.toscrape.com/" + href.replace("../", "")
             else:
-                detail_url = "http://books.toscrape.com/catalogue/" + href
+                detail_url = "https://books.toscrape.com/catalogue/" + href
             resp = requests.get(detail_url, timeout=10)
             if resp.status_code == 200:
                 detail_soup = BeautifulSoup(resp.text, "html.parser")
@@ -81,7 +95,7 @@ def parse_books_fn(**context):
         except Exception:
             pass
 
-        books.append({
+        all_books.append({
             "title": title,
             "price": price,
             "rating": rating_map.get(rating_class, 0),
@@ -89,8 +103,11 @@ def parse_books_fn(**context):
             "category": category,
             "sk": hashlib.sha256(f"{title}{price}".encode()).hexdigest()
         })
-    context['ti'].xcom_push(key='books', value=json.dumps(books))
-    return f"parsed {len(books)} books"
+
+    # Randomly select SAMPLE_SIZE books from the full page
+    selected = random.sample(all_books, min(SAMPLE_SIZE, len(all_books)))
+    context['ti'].xcom_push(key='books', value=json.dumps(selected))
+    return f"page {page}: parsed {len(all_books)} books, randomly selected {len(selected)}"
 
 
 def validate_schema_fn(**context):
